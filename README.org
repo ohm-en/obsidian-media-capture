@@ -1,0 +1,16 @@
+:PROPERTIES:
+:ID:       7a30ff48-9fe7-4599-9594-bb462ea01498
+:END:
+#+title: Obsidian Media Capturelog
+* The Program
+:PROPERTIES:
+:header-args: :noweb-ref code 
+:END:
+
+** Templater Overhead
+#+begin_src markdown :noweb yes :tangle (concat vault)
+  <%-*
+  <<code>>
+  _%>
+#+end_src
+
