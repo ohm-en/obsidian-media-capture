@@ -4,11 +4,214 @@
 #+title: Obsidian Media Capturelog
 * The Program
 :PROPERTIES:
-:header-args: :noweb-ref code 
+:header-args: javascript :noweb-ref code 
 :END:
+** Helper Functions
+*** (!) Prompt
+#+begin_src javascript
+  const prompt = function({msg, default_answer = "", throw_on_cancel}) {
+      const input = tp.system.prompt(msg, default_answer, throw_on_cancel);
+      return input;
+  }
+#+end_src
+*** (!) Suggester
+#+begin_src javascript
+  const suggester = function({options, throw_on_cancel, placeholder, limit = 10}) {
+      const text_items = options.map((option) => { return option.text});
+      return tp.system.suggester(text_items, options, throw_on_cancel, placeholder, limit);
+  }
+#+end_src
 
-** Templater Overhead
-#+begin_src markdown :noweb yes :tangle (concat vault)
+*** (!) Get Clipboard 
+#+begin_src javascript
+  const read_clipboard = function() { //!
+      return navigator.clipboard.readText();
+  }
+#+end_src
+
+*** (!) HTTP GET Request
+#+begin_src javascript
+  const makeRequest = function(url) {
+      const xhttp = new XMLHttpRequest();
+      xhttp.open("GET", url, false);
+      xhttp.send();
+      if (xhttp.status == 200) {
+          return JSON.parse(xhttp.responseText); // return JSON parsed
+          response
+      } else {
+          console.log(url);
+          throw new Error("Something went badly wrong!");
+      }
+  }
+#+end_src
+
+*** (!) Get File Reference
+#+begin_src javascript
+  const get_file_reference = function({title, ext = "md"}) {
+      const file = tp.file.find_tfile(title); 
+      return (file ? file : undefined); 
+  }
+#+end_src
+
+*** (!) Get Frontmatter
+#+begin_src javascript
+  const get_md_frontmatter = function(file) {
+      if (file) {
+          const frontmatter = app.metadataCache.getFileCache(file).frontmatter;
+          return ( frontmatter ? frontmatter : {})
+      } else {
+          return {};
+      }
+  }
+
+  const get_md_attribute = function({title, attribute}) {
+      const file = get_file_reference({title, ext: "md"})
+      const frontmatter = get_md_frontmatter(file);
+      return (frontmatter[attribute] ? frontmatter[attribute] : undefined); 
+  }
+#+end_src
+
+*** Object to YAML
+#+begin_src javascript
+  const object_to_yaml = function(object) {
+      const key_value_pairs = Object.entries(object).map(
+          function([key, val]) {
+              const value = (Array.isArray(val) ? `["${val.join('", "')}"]` : `"${val}"`)
+              return `${key}: ${value}`
+          });
+      const yaml = key_value_pairs.join("\n")
+      return yaml
+  }
+#+end_src
+
+*** Format Date
+#+begin_src javascript
+  const date_to_year = function(date) {
+      return (date ? date.replace(/-\d{2}-\d{2}/, "") : "");
+  }
+#+end_src
+
+*** Format Title
+#+begin_src javascript
+  const format_note_title = function(title) {
+      const formatted_title = title.replace(/:/g, " -").replace(/\//g, ";-").replace(/\|/g, "-");
+      return formatted_title;
+  }
+#+end_src
+
+** Logic
+*** Media Callbacks
+**** Link (General)
+#+begin_src javascript
+  const parse_link = function() {
+
+  }
+#+end_src
+
+**** Movies
+#+begin_src javascript
+  const get_movie = async function({query, year}) {
+      const key = get_api_key("tmdb_key_capture");
+      const query_results = makeRequest(`https://api.themoviedb.org/3/search/movie?api_key=${key}&query=${query}&year=${year}&page=1`).results;
+      const movie_results = query_results.map(
+          function(movie, index) {
+              const title = movie.title;
+              const release_date = date_to_year(movie.release_date);
+              return {text: `${title} (${release_date})`, index}
+          }
+      ) 
+      const selection = await suggester({options: movie_results, throw_on_cancel: true, placeholder: "Found Movies"}); 
+      const title = format_note_title(selection.text);
+      const movie_id = query_results[selection.index].id; 
+
+      const movie = makeRequest(`https://api.themoviedb.org/3/movie/${movie_id}?api_key=${key}&language=en-US`);
+      const api_config = makeRequest(`https://api.themoviedb.org/3/configuration?api_key=${key}`);
+      const attributes = {};
+      attributes.overview     = movie.overview;
+      attributes.genres       = movie.genres.map(function(genre) {return genre.name});
+      attributes.release_date = movie.release_date;
+      attributes.runtime      = movie.runtime + "m";
+      attributes.thumbnail    = movie.poster_path;
+      attributes.tmdb_id      = movie.id;
+      attributes.imdb_id      = movie.imdb_id;
+
+      return {attributes, title};
+  }
+#+end_src
+
+**** Televison
+#+begin_src javascript
+#+end_src
+**** Youtube
+#+begin_src javascript
+#+end_src
+**** Books
+#+begin_src javascript
+#+end_src
+**** Articles
+#+begin_src javascript
+#+end_src
+*** Retrieve API Key
+#+begin_src javascript 
+  const get_api_key = function(name) {
+      const key = get_md_attribute({title: "capture_settings_ohm", attribute: name}); 
+      return key;
+  }
+#+end_src
+*** Prompt Inputs
+#+begin_src javascript
+  const prompt_inputs = async function(input_prompts) { // TODO: There must be a better way to handle the promises from `prompt`;
+      const msgs = await Promise.all(Object.values(input_prompts).map(
+          function(msg) {
+              return prompt({msg, throw_on_cancel: true}); 
+          }));
+      const inputs = {};
+      const keys = Object.keys(input_prompts);
+      msgs.forEach(
+          function(msg, index) {
+              inputs[keys[index]] = msg;
+          });
+      return inputs;
+  }
+#+end_src
+*** Determine Default Option
+#+begin_src javascript
+  const get_assumed_option = function() {
+      const clipboard = read_clipboard();
+      return (/^https?:\/\//.test(clipboard) ? {option: 0, value: clipboard} : undefined);
+  }
+#+end_src
+
+*** Main
+#+begin_src javascript
+  const main = async function(options) {
+      const assumed = get_assumed_option();
+      const option = assumed ? options[assumed.option] : await suggester({options, throw_on_cancel: true, placeholder: "Capture: "})
+      const inputs = await prompt_inputs(option.inputs);
+      const {attributes, title} = await option.callback(inputs); 
+      const file_contents = "---\n" + object_to_yaml(attributes) + "\n---";
+      await tp.file.create_new(file_contents, title, true);
+      return; 
+  }
+#+end_src
+
+*** Start Main
+#+begin_src javascript :noweb yes 
+  const options = [
+      {text: "Link",
+       callback: parse_link,
+       inputs: undefined},
+      {text: "Youtube",
+       callback: "",
+       inputs: {youtube_id: "Youtube ID"}},
+      {text: "Movies",
+       callback: get_movie,
+       inputs: {year: "Release Year", query: "Movie Title"}}
+  ]
+  main(options)
+#+end_src
+* Markdown & Templater Export
+#+begin_src javascript :noweb yes :tangle (concat vault)
   <%-*
   <<code>>
   _%>
